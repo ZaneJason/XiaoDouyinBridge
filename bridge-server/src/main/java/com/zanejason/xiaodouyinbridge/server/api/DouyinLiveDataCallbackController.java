@@ -2,11 +2,7 @@ package com.zanejason.xiaodouyinbridge.server.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.zanejason.xiaodouyinbridge.server.model.BindingRecord;
-import com.zanejason.xiaodouyinbridge.server.service.BindingService;
-import com.zanejason.xiaodouyinbridge.server.service.DouyinApiClient;
-import com.zanejason.xiaodouyinbridge.server.service.DouyinLiveSessionService;
-import com.zanejason.xiaodouyinbridge.server.service.DouyinMessageDeduplicator;
+import com.zanejason.xiaodouyinbridge.server.service.DouyinLiveEventService;
 import com.zanejason.xiaodouyinbridge.server.service.DouyinSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,39 +17,25 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.OptionalInt;
-import java.util.concurrent.CompletableFuture;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/douyin/live-data/callback")
 public class DouyinLiveDataCallbackController {
     private static final Logger log = LoggerFactory.getLogger(DouyinLiveDataCallbackController.class);
-    private static final Pattern BIND_PATTERN = Pattern.compile("^(?:绑定|bind)\\s*([0-9]{6})$", Pattern.CASE_INSENSITIVE);
 
     private final ObjectMapper objectMapper;
-    private final BindingService bindingService;
     private final DouyinSignatureService signatureService;
-    private final DouyinMessageDeduplicator deduplicator;
-    private final DouyinLiveSessionService liveSessionService;
-    private final DouyinApiClient apiClient;
+    private final DouyinLiveEventService liveEventService;
     private final String dataSecret;
 
     public DouyinLiveDataCallbackController(
             ObjectMapper objectMapper,
-            BindingService bindingService,
             DouyinSignatureService signatureService,
-            DouyinMessageDeduplicator deduplicator,
-            DouyinLiveSessionService liveSessionService,
-            DouyinApiClient apiClient,
+            DouyinLiveEventService liveEventService,
             @Value("${douyin.data-secret:default}") String dataSecret) {
         this.objectMapper = objectMapper;
-        this.bindingService = bindingService;
         this.signatureService = signatureService;
-        this.deduplicator = deduplicator;
-        this.liveSessionService = liveSessionService;
-        this.apiClient = apiClient;
+        this.liveEventService = liveEventService;
         this.dataSecret = dataSecret;
     }
 
@@ -97,123 +79,21 @@ public class DouyinLiveDataCallbackController {
                 return ResponseEntity.badRequest().body(Map.of("error", "payload must be an array"));
             }
 
-            log.info("[DOUYIN-CALLBACK] Signature OK: room={} type={} events={}",
-                    roomId, msgType, payload.size());
+            log.info("[DOUYIN-CALLBACK] Signature OK: room={} type={} events={}", roomId, msgType, payload.size());
 
-            switch (msgType) {
-                case "live_comment" -> handleComments(roomId, payload);
-                case "live_fansclub" -> handleFansClub(payload);
-                default -> log.info("[DOUYIN-CALLBACK] Signed message type currently unused: room={} type={} events={}",
-                        roomId, msgType, payload.size());
-            }
-            return ResponseEntity.ok(Map.of("ok", true));
+            // 服务端回调按消息类型拆批；统一事件处理器仍按每条 msg_type_str 处理。
+            DouyinLiveEventService.ProcessSummary summary = liveEventService.processPayload(
+                    "SERVER_CALLBACK", roomId, payload);
+
+            return ResponseEntity.ok(Map.of(
+                    "ok", true,
+                    "events", summary.events(),
+                    "bindings", summary.bindings(),
+                    "fansClubEvents", summary.fansClubEvents()
+            ));
         } catch (Exception e) {
             log.error("[DOUYIN-CALLBACK] Processing FAILED: room={} type={}", roomId, msgType, e);
             return ResponseEntity.internalServerError().body(Map.of("error", "callback processing failed"));
         }
-    }
-
-    private void handleComments(String roomId, JsonNode payload) {
-        int bindCommands = 0;
-        for (JsonNode event : payload) {
-            String msgId = event.path("msg_id").asText("");
-            if (!deduplicator.firstSeen(msgId)) {
-                log.debug("[DOUYIN-COMMENT] Duplicate msg ignored: msgId={}", msgId);
-                continue;
-            }
-
-            String content = event.path("content").asText("").trim();
-            Matcher matcher = BIND_PATTERN.matcher(content);
-            if (!matcher.matches()) {
-                continue;
-            }
-            bindCommands++;
-
-            String code = matcher.group(1);
-            String openId = event.path("sec_openid").asText("");
-            String nickname = event.path("nickname").asText("");
-            int eventLevel = Math.max(0, event.path("fansclub_level").asInt(0));
-
-            log.info("[DOUYIN-COMMENT] Bind command received: nickname={} douyin={} code={} eventLevel={}",
-                    safe(nickname), shortId(openId), code, eventLevel);
-
-            try {
-                BindingRecord record = bindingService.complete(code, openId, nickname, eventLevel);
-                log.info("[DOUYIN-COMMENT] Real binding SUCCESS: mc={} douyin={} nickname={} initialLevel={}",
-                        record.minecraftName(), shortId(openId), safe(nickname), eventLevel);
-
-                CompletableFuture.runAsync(() -> refreshFanInfo(roomId, openId, nickname));
-            } catch (IllegalArgumentException e) {
-                log.info("[DOUYIN-COMMENT] Bind command ignored: nickname={} douyin={} code={} reason={}",
-                        safe(nickname), shortId(openId), code, e.getMessage());
-            }
-        }
-        if (bindCommands == 0) {
-            log.debug("[DOUYIN-COMMENT] Batch contained no binding command: events={}", payload.size());
-        }
-    }
-
-    private void handleFansClub(JsonNode payload) {
-        for (JsonNode event : payload) {
-            String msgId = event.path("msg_id").asText("");
-            if (!deduplicator.firstSeen(msgId)) {
-                log.debug("[DOUYIN-FANSCLUB] Duplicate msg ignored: msgId={}", msgId);
-                continue;
-            }
-
-            String openId = event.path("sec_openid").asText("");
-            String nickname = event.path("nickname").asText("");
-            int reasonType = event.path("fansclub_reason_type").asInt(0);
-            int level = reasonType == 16 ? 0 : Math.max(0, event.path("fansclub_level").asInt(0));
-
-            log.info("[DOUYIN-FANSCLUB] Event received: douyin={} nickname={} reason={} level={}",
-                    shortId(openId), safe(nickname), reasonType, level);
-
-            bindingService.updateLevelByDouyinOpenId(openId, nickname, level)
-                    .ifPresent(record -> log.info(
-                            "[DOUYIN-FANSCLUB] MC sync target found: mc={} reason={} level={}",
-                            record.minecraftName(), reasonType, level));
-        }
-    }
-
-    private void refreshFanInfo(String roomId, String openId, String nickname) {
-        try {
-            DouyinLiveSessionService.LiveSession session = liveSessionService.find(roomId).orElse(null);
-            if (session == null) {
-                log.info("[DOUYIN-FANSCLUB] No local live-session metadata for room={}; waiting for event-driven level update", roomId);
-                return;
-            }
-
-            OptionalInt levelLayer = apiClient.getFansClubLevelLayer(roomId, session.anchorOpenId(), openId);
-            if (levelLayer.isEmpty()) {
-                log.info("[DOUYIN-FANSCLUB] Detail query returned no level_layer: room={} douyin={}", roomId, shortId(openId));
-                return;
-            }
-
-            int level = levelLayer.getAsInt();
-            bindingService.updateLevelByDouyinOpenId(openId, nickname, level);
-            log.info("[DOUYIN-FANSCLUB] Detail query refreshed level_layer: room={} douyin={} level={}",
-                    roomId, shortId(openId), level);
-        } catch (Exception e) {
-            log.warn("[DOUYIN-FANSCLUB] Detail refresh FAILED: room={} douyin={} reason={}",
-                    roomId, shortId(openId), e.getMessage());
-        }
-    }
-
-    private static String shortId(String value) {
-        if (value == null || value.isBlank()) {
-            return "<empty>";
-        }
-        if (value.length() <= 10) {
-            return value;
-        }
-        return value.substring(0, 4) + "..." + value.substring(value.length() - 4);
-    }
-
-    private static String safe(String value) {
-        if (value == null || value.isBlank()) {
-            return "<empty>";
-        }
-        return value.replace('\n', ' ').replace('\r', ' ');
     }
 }
