@@ -1,0 +1,8 @@
+launcher.conf
+build/
+out/
+.vs/
+
+# Official vendor SDK files stay local unless redistribution is explicitly allowed.
+third_party/PipeSDK/*
+!third_party/PipeSDK/README.md
