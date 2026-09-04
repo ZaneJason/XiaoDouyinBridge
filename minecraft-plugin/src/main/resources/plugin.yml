@@ -1,0 +1,20 @@
+name: XiaoDouyinBridge
+version: 1.0.0
+main: com.zanejason.xiaodouyinbridge.minecraft.XiaoDouyinBridgePlugin
+api-version: '1.21'
+author: ZaneJason
+description: 抖音粉丝团与 Minecraft 联动桥接插件
+
+commands:
+  douyin:
+    description: 抖音账号绑定与粉丝团信息
+    usage: /douyin <bind|info|reload>
+    aliases: [dy]
+
+permissions:
+  xiaodouyin.use:
+    description: 允许使用抖音绑定和查询命令
+    default: true
+  xiaodouyin.admin:
+    description: 允许重载 XiaoDouyinBridge 配置
+    default: op
