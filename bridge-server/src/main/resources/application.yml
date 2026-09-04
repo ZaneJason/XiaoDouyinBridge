@@ -5,3 +5,12 @@ server:
 bridge:
   # 正式部署时务必改掉，并与 Minecraft 插件 config.yml 保持一致。
   api-key: ${XIAODOUYINBRIDGE_API_KEY:change-me}
+
+douyin:
+  # 抖音开放平台直播小玩法 / 互动插件应用凭据。AppSecret 只能放在 Bridge 服务端。
+  app-id: ${DOUYIN_APP_ID:}
+  app-secret: ${DOUYIN_APP_SECRET:}
+
+  # 开放平台「直播间数据能力开发配置」里设置的数据密钥。
+  # 官方自测工具未配置时可能使用 default；生产环境务必改成你自己的随机密钥。
+  data-secret: ${DOUYIN_DATA_SECRET:default}
