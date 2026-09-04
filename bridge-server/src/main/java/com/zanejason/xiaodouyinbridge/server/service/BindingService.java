@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,6 +17,7 @@ public class BindingService {
     private final SecureRandom random = new SecureRandom();
     private final Map<String, PendingBinding> pendingByCode = new ConcurrentHashMap<>();
     private final Map<String, BindingRecord> bindingsByMinecraftUuid = new ConcurrentHashMap<>();
+    private final Map<String, String> minecraftUuidByDouyinOpenId = new ConcurrentHashMap<>();
 
     public PendingBinding createRequest(String minecraftUuid, String minecraftName) {
         cleanupExpired();
@@ -34,22 +36,39 @@ public class BindingService {
         return pending;
     }
 
-    public BindingRecord complete(String code, String douyinOpenId, String douyinNickname, int fansClubLevel) {
+    public synchronized BindingRecord complete(String code, String douyinOpenId, String douyinNickname, int fansClubLevel) {
         cleanupExpired();
         PendingBinding pending = pendingByCode.remove(code);
         if (pending == null) {
             throw new IllegalArgumentException("绑定码不存在或已失效");
+        }
+        if (douyinOpenId == null || douyinOpenId.isBlank()) {
+            throw new IllegalArgumentException("抖音 openId 不能为空");
+        }
+
+        String previousMinecraftUuid = minecraftUuidByDouyinOpenId.get(douyinOpenId);
+        if (previousMinecraftUuid != null && !previousMinecraftUuid.equals(pending.minecraftUuid())) {
+            BindingRecord previous = bindingsByMinecraftUuid.remove(previousMinecraftUuid);
+            if (previous != null) {
+                minecraftUuidByDouyinOpenId.remove(previous.douyinOpenId());
+            }
+        }
+
+        BindingRecord oldForMinecraft = bindingsByMinecraftUuid.get(pending.minecraftUuid());
+        if (oldForMinecraft != null) {
+            minecraftUuidByDouyinOpenId.remove(oldForMinecraft.douyinOpenId());
         }
 
         BindingRecord record = new BindingRecord(
                 pending.minecraftUuid(),
                 pending.minecraftName(),
                 douyinOpenId,
-                douyinNickname,
+                douyinNickname == null ? "" : douyinNickname,
                 Math.max(0, fansClubLevel),
                 Instant.now()
         );
         bindingsByMinecraftUuid.put(record.minecraftUuid(), record);
+        minecraftUuidByDouyinOpenId.put(record.douyinOpenId(), record.minecraftUuid());
         return record;
     }
 
@@ -57,21 +76,46 @@ public class BindingService {
         return Optional.ofNullable(bindingsByMinecraftUuid.get(minecraftUuid));
     }
 
+    public Optional<BindingRecord> findByDouyinOpenId(String douyinOpenId) {
+        String minecraftUuid = minecraftUuidByDouyinOpenId.get(douyinOpenId);
+        return minecraftUuid == null ? Optional.empty() : findByMinecraftUuid(minecraftUuid);
+    }
+
+    public Collection<BindingRecord> allBindings() {
+        return ListCopy.copyOf(bindingsByMinecraftUuid.values());
+    }
+
     public BindingRecord updateLevel(String minecraftUuid, int fansClubLevel) {
         BindingRecord old = bindingsByMinecraftUuid.get(minecraftUuid);
         if (old == null) {
             throw new IllegalArgumentException("Minecraft 玩家尚未绑定抖音账号");
         }
+        return replace(old, old.douyinNickname(), fansClubLevel);
+    }
 
+    public Optional<BindingRecord> updateLevelByDouyinOpenId(String douyinOpenId, String douyinNickname, int fansClubLevel) {
+        Optional<BindingRecord> existing = findByDouyinOpenId(douyinOpenId);
+        if (existing.isEmpty()) {
+            return Optional.empty();
+        }
+        BindingRecord old = existing.get();
+        String nickname = douyinNickname == null || douyinNickname.isBlank()
+                ? old.douyinNickname()
+                : douyinNickname;
+        return Optional.of(replace(old, nickname, fansClubLevel));
+    }
+
+    private BindingRecord replace(BindingRecord old, String douyinNickname, int fansClubLevel) {
         BindingRecord updated = new BindingRecord(
                 old.minecraftUuid(),
                 old.minecraftName(),
                 old.douyinOpenId(),
-                old.douyinNickname(),
+                douyinNickname,
                 Math.max(0, fansClubLevel),
                 Instant.now()
         );
-        bindingsByMinecraftUuid.put(minecraftUuid, updated);
+        bindingsByMinecraftUuid.put(old.minecraftUuid(), updated);
+        minecraftUuidByDouyinOpenId.put(old.douyinOpenId(), old.minecraftUuid());
         return updated;
     }
 
@@ -86,5 +130,13 @@ public class BindingService {
             String minecraftName,
             Instant expiresAt
     ) {
+    }
+
+    private static final class ListCopy {
+        private ListCopy() {}
+
+        static <T> Collection<T> copyOf(Collection<T> values) {
+            return java.util.List.copyOf(values);
+        }
     }
 }
