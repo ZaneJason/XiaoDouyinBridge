@@ -23,6 +23,7 @@
 - 启动 `live_fansclub` / `live_comment` 数据推送任务
 - 绑定后可调用官方「获取粉丝团信息」接口做一次校准
 - 对 `msg_id` 做去重，避免平台重复推送导致重复处理
+- 使用 MariaDB 持久化绑定关系、粉丝团等级和 10 分钟有效的临时绑定码
 
 > `api/dev/fansclub/*` 模拟接口仍保留用于本地测试，但正式链路不依赖它。
 
@@ -38,13 +39,51 @@ XiaoDouyinBridge/
 
 - Java 21
 - Maven 3.9+
+- MariaDB 10.5+ / MySQL 兼容协议
 - Spigot 1.21.1
+
+## MariaDB
+
+默认数据库名：
+
+```text
+xiaodouyinbridge
+```
+
+先在 MariaDB 中创建库和专用账号：
+
+```sql
+CREATE DATABASE `xiaodouyinbridge`
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'xiaodouyinbridge'@'127.0.0.1'
+  IDENTIFIED BY '请换成强密码';
+
+GRANT ALL PRIVILEGES ON `xiaodouyinbridge`.*
+  TO 'xiaodouyinbridge'@'127.0.0.1';
+
+FLUSH PRIVILEGES;
+```
+
+Bridge 启动时会自动执行 `schema.sql`，创建：
+
+```text
+xdb_binding
+xdb_pending_binding
+```
+
+因此只需要提前创建数据库和数据库账号，不需要手工建表。
 
 ## Bridge 配置
 
 推荐通过环境变量配置：
 
 ```bash
+export XIAODOUYINBRIDGE_DB_URL='jdbc:mariadb://127.0.0.1:3306/xiaodouyinbridge'
+export XIAODOUYINBRIDGE_DB_USER='xiaodouyinbridge'
+export XIAODOUYINBRIDGE_DB_PASSWORD='你的数据库强密码'
+
 export XIAODOUYINBRIDGE_API_KEY='换成你自己的随机字符串'
 export DOUYIN_APP_ID='ttxxxxxxxxxxxx'
 export DOUYIN_APP_SECRET='你的 AppSecret'
@@ -54,13 +93,17 @@ export DOUYIN_DATA_SECRET='直播间数据能力开发配置里的数据密钥'
 Windows PowerShell：
 
 ```powershell
+$env:XIAODOUYINBRIDGE_DB_URL='jdbc:mariadb://127.0.0.1:3306/xiaodouyinbridge'
+$env:XIAODOUYINBRIDGE_DB_USER='xiaodouyinbridge'
+$env:XIAODOUYINBRIDGE_DB_PASSWORD='你的数据库强密码'
+
 $env:XIAODOUYINBRIDGE_API_KEY='换成你自己的随机字符串'
 $env:DOUYIN_APP_ID='ttxxxxxxxxxxxx'
 $env:DOUYIN_APP_SECRET='你的 AppSecret'
 $env:DOUYIN_DATA_SECRET='直播间数据能力开发配置里的数据密钥'
 ```
 
-**不要把真实 AppSecret 或数据密钥提交到 GitHub。**
+**不要把真实数据库密码、AppSecret、Bridge API Key 或数据密钥提交到 GitHub。**
 
 启动 Bridge：
 
@@ -162,6 +205,8 @@ sec_openid + nickname + 绑定码
   ↓
 XiaoDouyinBridge
   ↓
+MariaDB
+  ↓
 Minecraft UUID ↔ 抖音 sec_openid
 ```
 
@@ -172,7 +217,9 @@ live_fansclub
 fansclub_reason_type = 1   # 升级
 fansclub_level = 13
   ↓
-Bridge 找到绑定的 Minecraft UUID
+Bridge 更新 MariaDB
+  ↓
+Minecraft 插件查询 Bridge
   ↓
 [团Lv.13] Fee_God
 ```
@@ -186,14 +233,17 @@ Bridge 找到绑定的 Minecraft UUID
 - 实时等级变化以抖音官方 `live_fansclub` 回调中的 `fansclub_level` 为准。
 - Bridge 会使用开放平台配置的数据密钥验证 `x-signature`，验签失败的请求直接拒绝。
 - 绑定时还会尝试调用官方「获取粉丝团信息」接口进行校准；该接口官方响应字段名为 `level_layer`。
+- 成功绑定后的 `sec_openid`、昵称、Minecraft UUID、粉丝团等级和更新时间都会写入 MariaDB。
 
 只有当应用已经获得对应开放能力、玩法实际挂载在直播间并成功启动数据推送任务后，抖音才会向 Bridge 推送真实数据。
 
 ## Minecraft 插件配置
 
+Bridge 与 Minecraft 不在同一台机器时，把 `base-url` 配成 Bridge 的公网 HTTPS 地址：
+
 ```yaml
 bridge:
-  base-url: "http://127.0.0.1:8765"
+  base-url: "https://douyin.example.com"
   api-key: "与 XIAODOUYINBRIDGE_API_KEY 一致"
   sync-seconds: 30
 ```
