@@ -33,6 +33,10 @@ public class DouyinLiveEventService {
     }
 
     public ProcessSummary processPayload(String source, String roomId, JsonNode payload) {
+        return processPayload(source, roomId, "", payload);
+    }
+
+    public ProcessSummary processPayload(String source, String roomId, String defaultMessageType, JsonNode payload) {
         if (payload == null || !payload.isArray()) {
             throw new IllegalArgumentException("payload must be an array");
         }
@@ -51,6 +55,10 @@ public class DouyinLiveEventService {
             }
 
             String type = event.path("msg_type_str").asText("");
+            if (type.isBlank()) {
+                type = defaultMessageType == null ? "" : defaultMessageType;
+            }
+
             switch (type) {
                 case "live_comment" -> {
                     comments++;
