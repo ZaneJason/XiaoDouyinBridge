@@ -35,18 +35,37 @@ jobs:
           name: XiaoDouyinBridge-Server
           path: bridge-server/target/bridge-server-1.0.0-SNAPSHOT.jar
 
-  launcher-core:
+  launcher:
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure launcher core
-        run: cmake -S douyin-launcher -B douyin-launcher/build -DXDB_WITH_PIPESDK=OFF
+      - name: Configure launcher
+        run: cmake -S douyin-launcher -B douyin-launcher/build -A x64
 
-      - name: Build launcher core
+      - name: Build launcher
         run: cmake --build douyin-launcher/build --config Release
 
-      # Do not upload this EXE as a production artifact yet: the official Douyin
-      # PipeSDK is intentionally not redistributed in this repository. The CI job
-      # only verifies argument parsing, config, logging and HTTPS Bridge code.
+      - name: Stage launcher artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path douyin-launcher/package | Out-Null
+          Copy-Item douyin-launcher/build/Release/XiaoDouyinBridge.exe douyin-launcher/package/
+          Copy-Item douyin-launcher/launcher.conf.example douyin-launcher/package/
+          Set-Content -Encoding UTF8 douyin-launcher/package/README.txt @'
+          XiaoDouyinBridge Live Companion Launcher
+
+          1. Copy the official x64 PipeSDK.dll beside XiaoDouyinBridge.exe.
+          2. Copy launcher.conf.example to launcher.conf.
+          3. Configure bridge.base-url and bridge.launcher-key.
+          4. Start the EXE from Douyin Live Companion, not by double-clicking for production use.
+
+          PipeSDK.dll is not redistributed by this repository and must come from the official Douyin pure_PipeSDK package.
+          '@
+
+      - name: Upload Windows launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoDouyinBridge-Launcher-Windows-x64
+          path: douyin-launcher/package/
