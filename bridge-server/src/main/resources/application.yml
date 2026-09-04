@@ -1,0 +1,7 @@
+server:
+  port: 8765
+  address: 0.0.0.0
+
+bridge:
+  # 正式部署时务必改掉，并与 Minecraft 插件 config.yml 保持一致。
+  api-key: ${XIAODOUYINBRIDGE_API_KEY:change-me}
