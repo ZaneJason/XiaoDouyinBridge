@@ -2,6 +2,23 @@
 
 抖音直播粉丝团与 Minecraft Spigot 1.21.1 服务器联动桥接项目。
 
+## 当前架构
+
+```text
+抖音直播伴侣
+   ↓ PipeSDK / OPEN_LIVE_DATA
+XiaoDouyinBridge.exe（Windows 互动插件）
+   ↓ HTTPS + X-Launcher-Key
+阿里云 Bridge Server
+   ↕ MariaDB
+   ↑ HTTPS
+Minecraft Spigot 插件
+```
+
+对于「互动插件 / 仅直播伴侣」产物，主链路直接使用直播伴侣 PipeSDK 推送的 `OPEN_LIVE_DATA`。这条数据里包含评论、粉丝团变更以及观众的 `sec_open_id` / `fansclub_level`，因此不需要 Launcher 自己猜 `room_id`。
+
+Bridge 仍保留抖音官方服务端 HTTP callback / launch-token session 相关代码，方便其它接入模式和联调，但当前直播伴侣互动插件路线优先走 Launcher ingress。
+
 ## 当前能力
 
 ### Minecraft
@@ -13,26 +30,44 @@
 
 ### Bridge Server
 
-- 接收抖音官方 HTTP 直播数据回调
-- 按官方算法校验 `x-signature`
-- 处理 `live_fansclub` 真实加团 / 升级 / 退团事件
-- 处理 `live_comment`，支持观众发送 `绑定 123456` 完成 MC ↔ 抖音账号绑定
-- 根据 `sec_openid` 把粉丝团变化同步到对应 Minecraft UUID
-- 调用抖音官方 `getAccessToken`
-- 调用官方「获取直播信息」接口
-- 启动 `live_fansclub` / `live_comment` 数据推送任务
-- 绑定后可调用官方「获取粉丝团信息」接口做一次校准
-- 对 `msg_id` 做去重，避免平台重复推送导致重复处理
-- 使用 MariaDB 持久化绑定关系、粉丝团等级和 10 分钟有效的临时绑定码
+- MariaDB 持久化绑定关系、粉丝团等级、10 分钟临时绑定码
+- 启动时自动执行 `schema.sql` 建表
+- 处理 `live_comment`：观众发送 `绑定 123456` 完成 MC ↔ 抖音账号绑定
+- 处理 `live_fansclub`：加团 / 升级 / 退团同步到 MC
+- 同时兼容 PipeSDK 字段 `sec_open_id` 与服务端回调字段 `sec_openid`
+- `msg_id` 去重
+- 官方 HTTP callback `x-signature` 验签
+- 独立的 Launcher 接入 Key，不与 Minecraft API Key 共用
+- 控制台 + 滚动文件日志
 
-> `api/dev/fansclub/*` 模拟接口仍保留用于本地测试，但正式链路不依赖它。
+### Windows Launcher
+
+已完成：
+
+- 解析直播伴侣启动参数：`--pipeName` / `--maxChannels` / `--mateVersion` / `--layoutMode`
+- `launcher.conf` / 环境变量配置
+- HTTPS 连接 Bridge
+- Launcher health check
+- 原样转发 PipeSDK EVENT_MESSAGE JSON
+- 日志输出到 `logs/xiaodouyin-launcher.log`
+- PipeSDK 做成独立 adapter，避免把平台 ABI 散落在业务代码里
+
+待完成：
+
+- 使用官方当前版本 `pure_PipeSDK.zip` 的真实头文件 / lib 完成 `PipeSdkAdapterOfficial.cpp`
+- 订阅 `OPEN_LIVE_DATA`
+- 收到 `EVENT_DISCONNECTED` / `OPEN_WIN_CLOSE` 后退出
+- 最终生成可上传抖音开放平台的生产 EXE 包
+
+> 仓库不会猜测或手写第三方 C++ ABI。生产 adapter 必须对照你从抖音官方文档下载的实际 PipeSDK 版本编译。
 
 ## 项目结构
 
 ```text
 XiaoDouyinBridge/
 ├─ bridge-server/       # Spring Boot Bridge 服务
-└─ minecraft-plugin/    # Spigot 1.21.1 插件
+├─ minecraft-plugin/    # Spigot 1.21.1 插件
+└─ douyin-launcher/     # Windows C++17 直播伴侣互动插件
 ```
 
 ## 环境
@@ -41,6 +76,8 @@ XiaoDouyinBridge/
 - Maven 3.9+
 - MariaDB 10.5+ / MySQL 兼容协议
 - Spigot 1.21.1
+- Windows 10/11 + Visual Studio 2019+ / CMake（Launcher）
+- 抖音官方 PipeSDK（生产 Launcher）
 
 ## MariaDB
 
@@ -50,60 +87,37 @@ XiaoDouyinBridge/
 xiaodouyinbridge
 ```
 
-先在 MariaDB 中创建库和专用账号：
-
-```sql
-CREATE DATABASE `xiaodouyinbridge`
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-CREATE USER 'xiaodouyinbridge'@'127.0.0.1'
-  IDENTIFIED BY '请换成强密码';
-
-GRANT ALL PRIVILEGES ON `xiaodouyinbridge`.*
-  TO 'xiaodouyinbridge'@'127.0.0.1';
-
-FLUSH PRIVILEGES;
-```
-
-Bridge 启动时会自动执行 `schema.sql`，创建：
+Bridge 启动时自动创建：
 
 ```text
 xdb_binding
 xdb_pending_binding
 ```
 
-因此只需要提前创建数据库和数据库账号，不需要手工建表。
+只需要提前创建数据库和数据库账号，不需要手工建表。
 
 ## Bridge 配置
 
-推荐通过环境变量配置：
+Linux 推荐通过环境变量：
 
 ```bash
 export XIAODOUYINBRIDGE_DB_URL='jdbc:mariadb://127.0.0.1:3306/xiaodouyinbridge'
 export XIAODOUYINBRIDGE_DB_USER='xiaodouyinbridge'
 export XIAODOUYINBRIDGE_DB_PASSWORD='你的数据库强密码'
 
-export XIAODOUYINBRIDGE_API_KEY='换成你自己的随机字符串'
+# Minecraft 插件访问 Bridge
+export XIAODOUYINBRIDGE_API_KEY='随机的 Minecraft Bridge Key'
+
+# Windows 直播伴侣 EXE 访问 Bridge，单独使用一个 Key
+export XIAODOUYINBRIDGE_LAUNCHER_KEY='另一个随机的 Launcher Key'
+
+# 服务端官方 callback / OpenAPI 路线使用
 export DOUYIN_APP_ID='ttxxxxxxxxxxxx'
 export DOUYIN_APP_SECRET='你的 AppSecret'
 export DOUYIN_DATA_SECRET='直播间数据能力开发配置里的数据密钥'
 ```
 
-Windows PowerShell：
-
-```powershell
-$env:XIAODOUYINBRIDGE_DB_URL='jdbc:mariadb://127.0.0.1:3306/xiaodouyinbridge'
-$env:XIAODOUYINBRIDGE_DB_USER='xiaodouyinbridge'
-$env:XIAODOUYINBRIDGE_DB_PASSWORD='你的数据库强密码'
-
-$env:XIAODOUYINBRIDGE_API_KEY='换成你自己的随机字符串'
-$env:DOUYIN_APP_ID='ttxxxxxxxxxxxx'
-$env:DOUYIN_APP_SECRET='你的 AppSecret'
-$env:DOUYIN_DATA_SECRET='直播间数据能力开发配置里的数据密钥'
-```
-
-**不要把真实数据库密码、AppSecret、Bridge API Key 或数据密钥提交到 GitHub。**
+**不要把真实数据库密码、AppSecret、API Key、Launcher Key 或数据密钥提交到 GitHub。**
 
 启动 Bridge：
 
@@ -111,135 +125,129 @@ $env:DOUYIN_DATA_SECRET='直播间数据能力开发配置里的数据密钥'
 mvn -pl bridge-server -am spring-boot:run
 ```
 
-默认监听：
+服务端联调日志：
 
-```text
-http://0.0.0.0:8765
+```bash
+tail -f logs/xiaodouyinbridge.log
 ```
 
-## 抖音开放平台要做的事情
+## 直播伴侣 Launcher → Bridge
 
-1. 创建「直播小玩法 / 互动插件」应用并通过对应准入流程。
-2. 申请「获取粉丝团互动数据」能力。
-3. 为“评论绑定”同时申请直播间评论互动数据能力。
-4. 如控制台提供「直播间观众粉丝团详细信息」能力，也建议一并申请。
-5. 在「直播间数据能力开发配置」中配置数据推送地址和数据密钥。
-6. 正式环境回调地址指向：
+Bridge 提供：
 
 ```text
-https://你的域名/api/douyin/live-data/callback
+GET  /api/douyin/launcher/health
+POST /api/douyin/launcher/event
 ```
 
-该路径同时支持 `HEAD`，供开放平台自测工具检查可用性。
+两者都要求：
 
-## 启动真实直播数据推送
+```text
+X-Launcher-Key: <XIAODOUYINBRIDGE_LAUNCHER_KEY>
+```
 
-### 方式 A：通过玩法 launch token（推荐）
+Launcher 把 PipeSDK 收到的完整消息原样 POST 到 `/api/douyin/launcher/event`。Bridge 只消费：
 
-直播伴侣 / 玩法客户端启动时拿到 launch token 后，请求 Bridge：
-
-```http
-POST /api/douyin/session/start
-X-Bridge-Key: <你的 bridge key>
-Content-Type: application/json
-
+```json
 {
-  "launchToken": "抖音启动玩法时给的 token"
+  "type": "event",
+  "eventName": "OPEN_LIVE_DATA",
+  "params": {
+    "payload": []
+  }
 }
 ```
 
-Bridge 会通过官方接口取得 `room_id` / `anchor_open_id`，再启动：
+其它 PipeSDK request/response/event 会被安全忽略。
+
+## Launcher 本地配置
+
+把：
 
 ```text
-live_fansclub
-live_comment
+douyin-launcher/launcher.conf.example
 ```
 
-### 方式 B：已知直播间信息时手动启动
-
-```http
-POST /api/douyin/session/start-manual
-X-Bridge-Key: <你的 bridge key>
-Content-Type: application/json
-
-{
-  "roomId": "直播间 roomId",
-  "anchorOpenId": "主播 openId",
-  "anchorNickname": "主播昵称"
-}
-```
-
-查看 Bridge 当前状态：
-
-```http
-GET /api/douyin/session/status
-X-Bridge-Key: <你的 bridge key>
-```
-
-## 玩家真实绑定流程
-
-Minecraft 玩家：
+复制成 EXE 同目录：
 
 ```text
+launcher.conf
+```
+
+例如：
+
+```properties
+bridge.base-url=https://douyin.example.com
+bridge.launcher-key=你的独立LauncherKey
+bridge.timeout-seconds=10
+```
+
+也可以使用 Windows 环境变量：
+
+```powershell
+$env:XIAODOUYINBRIDGE_URL='https://douyin.example.com'
+$env:XIAODOUYINBRIDGE_LAUNCHER_KEY='你的独立LauncherKey'
+```
+
+## Launcher 构建
+
+不带官方 PipeSDK 的 core CI 编译：
+
+```powershell
+cmake -S douyin-launcher -B douyin-launcher/build -DXDB_WITH_PIPESDK=OFF
+cmake --build douyin-launcher/build --config Release
+```
+
+这只能验证 Launcher 的参数解析、配置、日志和 HTTPS Bridge 通信，不是最终抖音生产包。
+
+生产构建需要先从抖音官方文档下载当前 `pure_PipeSDK.zip`，然后按实际 SDK 目录配置：
+
+```powershell
+cmake -S douyin-launcher -B douyin-launcher/build `
+  -DXDB_WITH_PIPESDK=ON `
+  -DXDB_PIPESDK_ROOT='D:\sdk\PipeSDK'
+```
+
+## 玩家绑定流程
+
+```text
+Minecraft 玩家
 /douyin bind
+       ↓
+绑定码 572914
+       ↓
+玩家在主播直播间发送：绑定 572914
+       ↓
+直播伴侣 OPEN_LIVE_DATA / live_comment
+       ↓
+XiaoDouyinBridge.exe
+       ↓ HTTPS
+Bridge Server
+       ↓
+MariaDB：Minecraft UUID ↔ sec_open_id
 ```
 
-例如游戏返回：
+评论事件本身会带 `fansclub_level`，所以首次绑定即可获得当前事件里的粉丝团等级；之后 `live_fansclub` 变更事件继续实时更新等级。
 
-```text
-绑定码：572914
-```
-
-该玩家使用自己的抖音账号，在当前已经挂载 XiaoDouyinBridge 玩法的直播间发送：
-
-```text
-绑定 572914
-```
-
-抖音平台真实评论回调：
-
-```text
-live_comment
-  ↓
-sec_openid + nickname + 绑定码
-  ↓
-XiaoDouyinBridge
-  ↓
-MariaDB
-  ↓
-Minecraft UUID ↔ 抖音 sec_openid
-```
-
-之后真实粉丝团事件：
+例如：
 
 ```text
 live_fansclub
-fansclub_reason_type = 1   # 升级
+fansclub_reason_type = 1
 fansclub_level = 13
-  ↓
+       ↓
 Bridge 更新 MariaDB
-  ↓
-Minecraft 插件查询 Bridge
-  ↓
+       ↓
+Minecraft 插件周期同步
+       ↓
 [团Lv.13] Fee_God
 ```
 
-退团事件如果平台下发 `fansclub_reason_type = 16`，Bridge 会把等级同步为 0。
-
-## 关于“真实数据”
-
-正式模式下等级来源不是手工填写：
-
-- 实时等级变化以抖音官方 `live_fansclub` 回调中的 `fansclub_level` 为准。
-- Bridge 会使用开放平台配置的数据密钥验证 `x-signature`，验签失败的请求直接拒绝。
-- 绑定时还会尝试调用官方「获取粉丝团信息」接口进行校准；该接口官方响应字段名为 `level_layer`。
-- 成功绑定后的 `sec_openid`、昵称、Minecraft UUID、粉丝团等级和更新时间都会写入 MariaDB。
-
-只有当应用已经获得对应开放能力、玩法实际挂载在直播间并成功启动数据推送任务后，抖音才会向 Bridge 推送真实数据。
+`fansclub_reason_type = 16` 时等级同步为 `0`。
 
 ## Minecraft 插件配置
 
-Bridge 与 Minecraft 不在同一台机器时，把 `base-url` 配成 Bridge 的公网 HTTPS 地址：
+Bridge 与 Minecraft 不在同一台机器时：
 
 ```yaml
 bridge:
