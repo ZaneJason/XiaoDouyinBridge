@@ -60,6 +60,7 @@ public class DouyinLiveDataCallbackController {
     /** 抖音开放平台自测工具会先用 HEAD 检查回调域名是否可用。 */
     @RequestMapping(method = RequestMethod.HEAD)
     public ResponseEntity<Void> head() {
+        log.info("[DOUYIN-CALLBACK] HEAD self-test reached Bridge successfully");
         return ResponseEntity.ok().build();
     }
 
@@ -73,6 +74,7 @@ public class DouyinLiveDataCallbackController {
             @RequestBody(required = false) String body) {
 
         if (nonce == null || timestamp == null || roomId == null || msgType == null) {
+            log.warn("[DOUYIN-CALLBACK] Rejected request with missing signed headers: room={} type={}", roomId, msgType);
             return ResponseEntity.badRequest().body(Map.of("error", "missing signed headers"));
         }
 
@@ -84,33 +86,39 @@ public class DouyinLiveDataCallbackController {
 
         String rawBody = body == null ? "" : body;
         if (!signatureService.verify(signedHeaders, rawBody, dataSecret, signature)) {
-            log.warn("Rejected Douyin callback: signature mismatch, room={}, type={}", roomId, msgType);
+            log.warn("[DOUYIN-CALLBACK] Signature FAILED: room={} type={} timestamp={}", roomId, msgType, timestamp);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "invalid signature"));
         }
 
         try {
             JsonNode payload = objectMapper.readTree(rawBody);
             if (!payload.isArray()) {
+                log.warn("[DOUYIN-CALLBACK] Invalid payload shape: room={} type={}", roomId, msgType);
                 return ResponseEntity.badRequest().body(Map.of("error", "payload must be an array"));
             }
+
+            log.info("[DOUYIN-CALLBACK] Signature OK: room={} type={} events={}",
+                    roomId, msgType, payload.size());
 
             switch (msgType) {
                 case "live_comment" -> handleComments(roomId, payload);
                 case "live_fansclub" -> handleFansClub(payload);
-                default -> log.debug("Ignoring supported-signed but unused Douyin message type: {}", msgType);
+                default -> log.info("[DOUYIN-CALLBACK] Signed message type currently unused: room={} type={} events={}",
+                        roomId, msgType, payload.size());
             }
-            // 官方以 2XX 作为成功 ACK；回调处理必须尽快返回。
             return ResponseEntity.ok(Map.of("ok", true));
         } catch (Exception e) {
-            log.error("Failed to process Douyin callback, room={}, type={}", roomId, msgType, e);
+            log.error("[DOUYIN-CALLBACK] Processing FAILED: room={} type={}", roomId, msgType, e);
             return ResponseEntity.internalServerError().body(Map.of("error", "callback processing failed"));
         }
     }
 
     private void handleComments(String roomId, JsonNode payload) {
+        int bindCommands = 0;
         for (JsonNode event : payload) {
             String msgId = event.path("msg_id").asText("");
             if (!deduplicator.firstSeen(msgId)) {
+                log.debug("[DOUYIN-COMMENT] Duplicate msg ignored: msgId={}", msgId);
                 continue;
             }
 
@@ -119,23 +127,29 @@ public class DouyinLiveDataCallbackController {
             if (!matcher.matches()) {
                 continue;
             }
+            bindCommands++;
 
             String code = matcher.group(1);
             String openId = event.path("sec_openid").asText("");
             String nickname = event.path("nickname").asText("");
             int eventLevel = Math.max(0, event.path("fansclub_level").asInt(0));
 
+            log.info("[DOUYIN-COMMENT] Bind command received: nickname={} douyin={} code={} eventLevel={}",
+                    safe(nickname), shortId(openId), code, eventLevel);
+
             try {
                 BindingRecord record = bindingService.complete(code, openId, nickname, eventLevel);
-                log.info("Real Douyin binding completed: mc={} douyin={} openId={} initialLevel={}",
-                        record.minecraftName(), nickname, openId, eventLevel);
+                log.info("[DOUYIN-COMMENT] Real binding SUCCESS: mc={} douyin={} nickname={} initialLevel={}",
+                        record.minecraftName(), shortId(openId), safe(nickname), eventLevel);
 
-                // 查询当前粉丝团信息可能产生外网延迟，因此异步做，不阻塞抖音的 2 秒 ACK 时限。
                 CompletableFuture.runAsync(() -> refreshFanInfo(roomId, openId, nickname));
             } catch (IllegalArgumentException e) {
-                // 绑定码错误不能让整批抖音消息失败，否则平台会重试整批数据。
-                log.info("Ignored Douyin bind comment from {}: {}", nickname, e.getMessage());
+                log.info("[DOUYIN-COMMENT] Bind command ignored: nickname={} douyin={} code={} reason={}",
+                        safe(nickname), shortId(openId), code, e.getMessage());
             }
+        }
+        if (bindCommands == 0) {
+            log.debug("[DOUYIN-COMMENT] Batch contained no binding command: events={}", payload.size());
         }
     }
 
@@ -143,6 +157,7 @@ public class DouyinLiveDataCallbackController {
         for (JsonNode event : payload) {
             String msgId = event.path("msg_id").asText("");
             if (!deduplicator.firstSeen(msgId)) {
+                log.debug("[DOUYIN-FANSCLUB] Duplicate msg ignored: msgId={}", msgId);
                 continue;
             }
 
@@ -151,10 +166,13 @@ public class DouyinLiveDataCallbackController {
             int reasonType = event.path("fansclub_reason_type").asInt(0);
             int level = reasonType == 16 ? 0 : Math.max(0, event.path("fansclub_level").asInt(0));
 
+            log.info("[DOUYIN-FANSCLUB] Event received: douyin={} nickname={} reason={} level={}",
+                    shortId(openId), safe(nickname), reasonType, level);
+
             bindingService.updateLevelByDouyinOpenId(openId, nickname, level)
                     .ifPresent(record -> log.info(
-                            "Real Douyin fansclub update: mc={} douyin={} reason={} level={}",
-                            record.minecraftName(), nickname, reasonType, level));
+                            "[DOUYIN-FANSCLUB] MC sync target found: mc={} reason={} level={}",
+                            record.minecraftName(), reasonType, level));
         }
     }
 
@@ -162,16 +180,40 @@ public class DouyinLiveDataCallbackController {
         try {
             DouyinLiveSessionService.LiveSession session = liveSessionService.find(roomId).orElse(null);
             if (session == null) {
-                log.info("No live session metadata for room {}; exact fansclub event will update level later", roomId);
+                log.info("[DOUYIN-FANSCLUB] No local live-session metadata for room={}; waiting for event-driven level update", roomId);
                 return;
             }
 
             OptionalInt levelLayer = apiClient.getFansClubLevelLayer(roomId, session.anchorOpenId(), openId);
-            int level = levelLayer.orElse(0);
+            if (levelLayer.isEmpty()) {
+                log.info("[DOUYIN-FANSCLUB] Detail query returned no level_layer: room={} douyin={}", roomId, shortId(openId));
+                return;
+            }
+
+            int level = levelLayer.getAsInt();
             bindingService.updateLevelByDouyinOpenId(openId, nickname, level);
-            log.info("Refreshed Douyin fansclub level_layer for openId={} to {}", openId, level);
+            log.info("[DOUYIN-FANSCLUB] Detail query refreshed level_layer: room={} douyin={} level={}",
+                    roomId, shortId(openId), level);
         } catch (Exception e) {
-            log.warn("Failed to refresh Douyin fansclub info for openId={}: {}", openId, e.getMessage());
+            log.warn("[DOUYIN-FANSCLUB] Detail refresh FAILED: room={} douyin={} reason={}",
+                    roomId, shortId(openId), e.getMessage());
         }
+    }
+
+    private static String shortId(String value) {
+        if (value == null || value.isBlank()) {
+            return "<empty>";
+        }
+        if (value.length() <= 10) {
+            return value;
+        }
+        return value.substring(0, 4) + "..." + value.substring(value.length() - 4);
+    }
+
+    private static String safe(String value) {
+        if (value == null || value.isBlank()) {
+            return "<empty>";
+        }
+        return value.replace('\n', ' ').replace('\r', ' ');
     }
 }
