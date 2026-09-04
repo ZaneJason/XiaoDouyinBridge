@@ -29,3 +29,19 @@ douyin:
   # 开放平台「直播间数据能力开发配置」里设置的数据密钥。
   # 官方自测工具未配置时可能使用 default；生产环境务必改成你自己的随机密钥。
   data-secret: ${DOUYIN_DATA_SECRET:default}
+
+logging:
+  file:
+    # 同时保留控制台日志和文件日志；生产环境可通过环境变量修改目录。
+    name: ${XIAODOUYINBRIDGE_LOG_FILE:logs/xiaodouyinbridge.log}
+  level:
+    root: INFO
+    com.zanejason.xiaodouyinbridge: INFO
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 14
+      total-size-cap: 500MB
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{60} - %msg%n"
