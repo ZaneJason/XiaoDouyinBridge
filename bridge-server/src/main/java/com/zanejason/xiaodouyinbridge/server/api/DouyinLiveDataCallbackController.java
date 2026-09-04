@@ -81,9 +81,8 @@ public class DouyinLiveDataCallbackController {
 
             log.info("[DOUYIN-CALLBACK] Signature OK: room={} type={} events={}", roomId, msgType, payload.size());
 
-            // 服务端回调按消息类型拆批；统一事件处理器仍按每条 msg_type_str 处理。
             DouyinLiveEventService.ProcessSummary summary = liveEventService.processPayload(
-                    "SERVER_CALLBACK", roomId, payload);
+                    "SERVER_CALLBACK", roomId, msgType, payload);
 
             return ResponseEntity.ok(Map.of(
                     "ok", true,
