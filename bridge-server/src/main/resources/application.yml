@@ -18,8 +18,11 @@ spring:
       encoding: UTF-8
 
 bridge:
-  # 正式部署时务必改掉，并与 Minecraft 插件 config.yml 保持一致。
+  # Minecraft 插件专用 Key，正式部署时务必修改。
   api-key: ${XIAODOUYINBRIDGE_API_KEY:change-me}
+
+  # 直播伴侣 EXE 专用 Key。不要和 Minecraft API Key 共用，也不要写死到公开源码。
+  launcher-key: ${XIAODOUYINBRIDGE_LAUNCHER_KEY:change-me-launcher}
 
 douyin:
   # 抖音开放平台直播小玩法 / 互动插件应用凭据。AppSecret 只能放在 Bridge 服务端。
