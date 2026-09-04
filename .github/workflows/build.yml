@@ -34,3 +34,19 @@ jobs:
         with:
           name: XiaoDouyinBridge-Server
           path: bridge-server/target/bridge-server-1.0.0-SNAPSHOT.jar
+
+  launcher-core:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure launcher core
+        run: cmake -S douyin-launcher -B douyin-launcher/build -DXDB_WITH_PIPESDK=OFF
+
+      - name: Build launcher core
+        run: cmake --build douyin-launcher/build --config Release
+
+      # Do not upload this EXE as a production artifact yet: the official Douyin
+      # PipeSDK is intentionally not redistributed in this repository. The CI job
+      # only verifies argument parsing, config, logging and HTTPS Bridge code.
