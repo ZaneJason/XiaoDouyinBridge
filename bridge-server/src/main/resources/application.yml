@@ -2,6 +2,21 @@ server:
   port: 8765
   address: 0.0.0.0
 
+spring:
+  datasource:
+    url: ${XIAODOUYINBRIDGE_DB_URL:jdbc:mariadb://127.0.0.1:3306/xiaodouyinbridge}
+    username: ${XIAODOUYINBRIDGE_DB_USER:xiaodouyinbridge}
+    password: ${XIAODOUYINBRIDGE_DB_PASSWORD:change-me}
+    driver-class-name: org.mariadb.jdbc.Driver
+    hikari:
+      minimum-idle: 1
+      maximum-pool-size: 10
+      connection-timeout: 10000
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+
 bridge:
   # 正式部署时务必改掉，并与 Minecraft 插件 config.yml 保持一致。
   api-key: ${XIAODOUYINBRIDGE_API_KEY:change-me}
