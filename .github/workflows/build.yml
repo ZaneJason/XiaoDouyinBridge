@@ -1,0 +1,36 @@
+name: Build XiaoDouyinBridge
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build
+        run: mvn -B package
+
+      - name: Upload Minecraft plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoDouyinBridge-Minecraft
+          path: minecraft-plugin/target/XiaoDouyinBridge-1.0.0.jar
+
+      - name: Upload Bridge server
+        uses: actions/upload-artifact@v4
+        with:
+          name: XiaoDouyinBridge-Server
+          path: bridge-server/target/bridge-server-1.0.0-SNAPSHOT.jar
