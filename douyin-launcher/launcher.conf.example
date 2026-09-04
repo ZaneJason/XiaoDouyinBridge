@@ -1,0 +1,6 @@
+# Copy this file to launcher.conf beside XiaoDouyinBridge.exe.
+# Do not commit the real launcher key.
+
+bridge.base-url=https://douyin.example.com
+bridge.launcher-key=change-me-launcher
+bridge.timeout-seconds=10
