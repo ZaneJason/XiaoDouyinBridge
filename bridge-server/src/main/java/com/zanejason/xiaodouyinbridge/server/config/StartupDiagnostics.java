@@ -23,6 +23,7 @@ public class StartupDiagnostics implements ApplicationRunner {
     private final String datasourceUrl;
     private final String datasourceUser;
     private final String bridgeApiKey;
+    private final String launcherKey;
     private final String douyinAppId;
     private final String douyinAppSecret;
     private final String douyinDataSecret;
@@ -35,6 +36,7 @@ public class StartupDiagnostics implements ApplicationRunner {
             @Value("${spring.datasource.url}") String datasourceUrl,
             @Value("${spring.datasource.username}") String datasourceUser,
             @Value("${bridge.api-key}") String bridgeApiKey,
+            @Value("${bridge.launcher-key}") String launcherKey,
             @Value("${douyin.app-id:}") String douyinAppId,
             @Value("${douyin.app-secret:}") String douyinAppSecret,
             @Value("${douyin.data-secret:default}") String douyinDataSecret,
@@ -45,6 +47,7 @@ public class StartupDiagnostics implements ApplicationRunner {
         this.datasourceUrl = datasourceUrl;
         this.datasourceUser = datasourceUser;
         this.bridgeApiKey = bridgeApiKey;
+        this.launcherKey = launcherKey;
         this.douyinAppId = douyinAppId;
         this.douyinAppSecret = douyinAppSecret;
         this.douyinDataSecret = douyinDataSecret;
@@ -55,13 +58,14 @@ public class StartupDiagnostics implements ApplicationRunner {
     public void run(ApplicationArguments args) throws Exception {
         log.info("============================================================");
         log.info(" XiaoDouyinBridge Bridge Server is ready");
-        log.info(" HTTP port              : {}", serverPort);
-        log.info(" MariaDB URL            : {}", datasourceUrl);
-        log.info(" MariaDB user           : {}", datasourceUser);
-        log.info(" Douyin AppID configured: {}", configured(douyinAppId));
-        log.info(" Douyin AppSecret set   : {}", configured(douyinAppSecret));
-        log.info(" Douyin DataSecret set  : {}", configuredNonDefault(douyinDataSecret, "default"));
-        log.info(" Bridge API key set     : {}", configuredNonDefault(bridgeApiKey, "change-me"));
+        log.info(" HTTP port               : {}", serverPort);
+        log.info(" MariaDB URL             : {}", datasourceUrl);
+        log.info(" MariaDB user            : {}", datasourceUser);
+        log.info(" Douyin AppID configured : {}", configured(douyinAppId));
+        log.info(" Douyin AppSecret set    : {}", configured(douyinAppSecret));
+        log.info(" Douyin DataSecret set   : {}", configuredNonDefault(douyinDataSecret, "default"));
+        log.info(" Minecraft API key set   : {}", configuredNonDefault(bridgeApiKey, "change-me"));
+        log.info(" Launcher API key set    : {}", configuredNonDefault(launcherKey, "change-me-launcher"));
 
         try (Connection connection = dataSource.getConnection()) {
             DatabaseMetaData meta = connection.getMetaData();
@@ -78,15 +82,20 @@ public class StartupDiagnostics implements ApplicationRunner {
         if (!configuredNonDefault(bridgeApiKey, "change-me")) {
             log.warn(" [CONFIG] XIAODOUYINBRIDGE_API_KEY is still using the default value 'change-me'");
         }
+        if (!configuredNonDefault(launcherKey, "change-me-launcher")) {
+            log.warn(" [CONFIG] XIAODOUYINBRIDGE_LAUNCHER_KEY is still using the default value 'change-me-launcher'");
+        }
         if (!configured(douyinAppId) || !configured(douyinAppSecret)) {
-            log.warn(" [CONFIG] Douyin AppID/AppSecret is incomplete; real Douyin API calls will not work yet");
+            log.warn(" [CONFIG] Douyin AppID/AppSecret is incomplete; server-side Douyin OpenAPI calls will not work yet");
         }
         if (!configuredNonDefault(douyinDataSecret, "default")) {
             log.warn(" [CONFIG] DOUYIN_DATA_SECRET is still 'default'; replace it before production callback testing");
         }
 
-        log.info(" Callback endpoint       : /api/douyin/live-data/callback");
-        log.info(" Minecraft bindings API : /api/bindings");
+        log.info(" Official callback       : /api/douyin/live-data/callback");
+        log.info(" Live Companion ingress  : /api/douyin/launcher/event");
+        log.info(" Launcher health         : /api/douyin/launcher/health");
+        log.info(" Minecraft bindings API  : /api/bindings");
         log.info(" Douyin session API      : /api/douyin/session");
         log.info("============================================================");
     }
