@@ -1,0 +1,9 @@
+bridge:
+  # Bridge 服务地址。Bridge 与 Minecraft 在同一台机器时保持 127.0.0.1 即可。
+  base-url: "http://127.0.0.1:8765"
+
+  # 必须和 bridge-server 的 bridge.api-key 一致。
+  api-key: "change-me"
+
+  # 在线玩家粉丝团等级同步间隔，最低 10 秒。
+  sync-seconds: 30
