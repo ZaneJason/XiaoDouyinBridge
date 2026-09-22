@@ -58,7 +58,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
         auto pipeSdk = createPipeSdkAdapter(logger);
         if (!pipeSdk->available()) {
-            logger.error("[STARTUP] This build does not contain the official Douyin PipeSDK adapter yet");
+            logger.error("[STARTUP] Official PipeSDK is unavailable. Place the official x64 PipeSDK.dll beside XiaoDouyinBridge.exe");
             return 22;
         }
 
