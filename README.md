@@ -1,6 +1,16 @@
 # XiaoDouyinBridge
 
-抖音直播粉丝团与 Minecraft Spigot 1.21.1 服务器联动桥接项目。
+[![Build XiaoDouyinBridge](https://github.com/ZaneJason/XiaoDouyinBridge/actions/workflows/build.yml/badge.svg)](https://github.com/ZaneJason/XiaoDouyinBridge/actions/workflows/build.yml)
+
+**XiaoDouyinBridge is an open-source integration bridge that connects Douyin Live Companion events to Minecraft Spigot servers through a Windows C++ launcher and a Java/Spring Boot service.**
+
+抖音直播粉丝团与 Minecraft Spigot 1.21.1 服务器联动桥接项目。项目由 Windows C++ Launcher、Spring Boot Bridge Server 和 Minecraft 插件组成，目标是把直播互动事件以可部署、可维护的方式同步到游戏服务器。
+
+> **Status:** Active development. GitHub Actions builds the Java components and the Windows launcher. Production launcher use requires the official Douyin x64 `PipeSDK.dll`, which is intentionally not redistributed by this repository.
+
+- [Roadmap](ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
+- [Build workflow](https://github.com/ZaneJason/XiaoDouyinBridge/actions/workflows/build.yml)
 
 ## 当前架构
 
@@ -42,24 +52,19 @@ Bridge 仍保留抖音官方服务端 HTTP callback / launch-token session 相�
 
 ### Windows Launcher
 
-已完成：
+当前已实现：
 
 - 解析直播伴侣启动参数：`--pipeName` / `--maxChannels` / `--mateVersion` / `--layoutMode`
 - `launcher.conf` / 环境变量配置
-- HTTPS 连接 Bridge
-- Launcher health check
-- 原样转发 PipeSDK EVENT_MESSAGE JSON
+- HTTPS 连接 Bridge 与 Launcher health check
+- 运行时从 EXE 同目录加载官方 x64 `PipeSDK.dll`
+- 建立直播伴侣 Pipe 连接并订阅 `OPEN_LIVE_DATA`
+- 原样转发 PipeSDK `EVENT_MESSAGE` JSON
+- 收到 `OPEN_WIN_CLOSE`、`EVENT_DISCONNECTED`、broken/reset 事件后安全退出
 - 日志输出到 `logs/xiaodouyin-launcher.log`
-- PipeSDK 做成独立 adapter，避免把平台 ABI 散落在业务代码里
+- GitHub Actions 编译并上传 Windows x64 Launcher artifact
 
-待完成：
-
-- 使用官方当前版本 `pure_PipeSDK.zip` 的真实头文件 / lib 完成 `PipeSdkAdapterOfficial.cpp`
-- 订阅 `OPEN_LIVE_DATA`
-- 收到 `EVENT_DISCONNECTED` / `OPEN_WIN_CLOSE` 后退出
-- 最终生成可上传抖音开放平台的生产 EXE 包
-
-> 仓库不会猜测或手写第三方 C++ ABI。生产 adapter 必须对照你从抖音官方文档下载的实际 PipeSDK 版本编译。
+> 官方 `PipeSDK.dll` 属于平台 SDK，不会提交或重新分发到本仓库。生产运行时请从抖音官方开发资源取得与当前平台版本匹配的 x64 DLL，并放到 `XiaoDouyinBridge.exe` 同目录。
 
 ## 项目结构
 
@@ -191,22 +196,21 @@ $env:XIAODOUYINBRIDGE_LAUNCHER_KEY='你的独立LauncherKey'
 
 ## Launcher 构建
 
-不带官方 PipeSDK 的 core CI 编译：
+Windows x64 构建：
 
 ```powershell
-cmake -S douyin-launcher -B douyin-launcher/build -DXDB_WITH_PIPESDK=OFF
+cmake -S douyin-launcher -B douyin-launcher/build -A x64
 cmake --build douyin-launcher/build --config Release
 ```
 
-这只能验证 Launcher 的参数解析、配置、日志和 HTTPS Bridge 通信，不是最终抖音生产包。
+构建过程不需要把官方 PipeSDK 提交到仓库，因为 Launcher 使用 Windows 动态加载方式解析 `PipeSDK.dll`。CI 因此可以验证 C++ Launcher 的编译，并生成不包含厂商 DLL 的 artifact。
 
-生产构建需要先从抖音官方文档下载当前 `pure_PipeSDK.zip`，然后按实际 SDK 目录配置：
+生产运行时：
 
-```powershell
-cmake -S douyin-launcher -B douyin-launcher/build `
-  -DXDB_WITH_PIPESDK=ON `
-  -DXDB_PIPESDK_ROOT='D:\sdk\PipeSDK'
-```
+1. 从抖音官方开发资源取得当前 x64 `PipeSDK.dll`。
+2. 将 DLL 放到 `XiaoDouyinBridge.exe` 同目录。
+3. 复制 `launcher.conf.example` 为 `launcher.conf` 并配置 Bridge URL 与 Launcher Key。
+4. 由抖音直播伴侣按平台约定启动 Launcher。
 
 ## 玩家绑定流程
 
@@ -263,3 +267,10 @@ mvn -pl minecraft-plugin -am package
 ```
 
 生成的 JAR 放进 Spigot 的 `plugins/` 目录。
+
+
+## 开源协作
+
+欢迎提交 Bug、兼容性问题和改进建议。提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，当前开发方向见 [ROADMAP.md](ROADMAP.md)。
+
+请勿在 Issue、PR、日志或配置示例中提交真实数据库密码、AppSecret、API Key、Launcher Key 或数据密钥。
