@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement to XiaoDouyinBridge
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Bridge Server
+        - Minecraft Plugin
+        - Windows Launcher
+        - Documentation / CI
+        - Cross-component
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: Describe the behavior or API you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This request does not require redistributing proprietary Douyin SDK binaries.
+          required: true
+        - label: I am not including production credentials or private platform secrets.
+          required: true
