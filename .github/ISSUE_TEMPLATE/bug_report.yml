@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible problem in XiaoDouyinBridge
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve XiaoDouyinBridge. Please remove any real secrets from logs and examples before submitting.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Bridge Server
+        - Minecraft Plugin
+        - Windows Launcher
+        - Documentation / CI
+        - Unsure
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Java/CMake version, Spigot version, or other relevant runtime information.
+      placeholder: "Windows 11, Java 21, Spigot 1.21.1"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reproducible sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact API keys, launcher keys, database passwords, AppSecret values, and data secrets.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed all real credentials and secrets from this report.
+          required: true
+        - label: I checked existing issues for duplicates.
+          required: true
